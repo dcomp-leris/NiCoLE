@@ -1,1 +1,3 @@
-# NICoLE-LLM: In-Network LLM for RTP-Based Real-Time Video Quality — A Cost-Feasibility Study
+NICoLE: Are In-Network LLM-Based Agents Cost-Feasible for RTP Video Streaming?
+
+This repository is run to present the NICoLE!
