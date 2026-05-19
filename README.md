@@ -1,6 +1,10 @@
 # NICoLE: Are In-Network LLM-Based Agents Cost-Feasible for RTP Video Streaming?
 
-[![CG](https://img.shields.io/badge/NICoLE-Presentation-blue)](https://docs.google.com/presentation/d/1LHkMz7mNkxGzYqVPaLeMySLA2KP4OjW1hrWsEONwt4c/edit?usp=sharing)
+[![NICoLE](https://img.shields.io/badge/NICoLE-Presentation-blue)](https://docs.google.com/presentation/d/1LHkMz7mNkxGzYqVPaLeMySLA2KP4OjW1hrWsEONwt4c/edit?usp=sharing)
+[![NICoLE](https://img.shields.io/badge/NICoLE-Paper-yellow)](https://github.com/dcomp-leris/NiCoLE/blob/main/2026151137.pdf)
+
+
+
 
 *This paper was accepted and presented in the IFIP Networking 2026 Conference.*
 *This repository is run to present the NICoLE!*
