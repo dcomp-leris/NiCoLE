@@ -22,9 +22,28 @@ NICoLE (Network Inference for Congestion-aware Low-latency Optimization) is a co
   
 ## 2 - L4S/DualQ Support device
 
+## 3 - Mininet Simple Topology
+
+## 4 - NICoLE Agent Model
+
+- Go to the huggingface and find the following fine-tuned model!
 
 
-NICoLE predicts:
+HF Model:
+
+          alirezashirmarz/NICoLE-LLM
+          
+GGUF Model:
+
+        alirezashirmarz/NICoLE-LLM-GGUF
+
+Download and add models (HF & GGUF) to this project:
+
+        cd ./models
+        git clone https://huggingface.co/alirezashirmarz/NICoLE-LLM
+        
+
+**NICoLE predicts**:
 
 * ECN
 * Current Profile (CP)
@@ -32,7 +51,7 @@ NICoLE predicts:
 
 from RTP packetization and queue telemetry using compact symbolic prompting.
 
-The project demonstrates:
+**The project demonstrates**:
 
 * real-time WebRTC streaming
 * congestion-aware profile adaptation
@@ -59,7 +78,7 @@ The project demonstrates:
 
 ```text
 NICoLE/
-├── dataset/
+├── Gst_WebRTC/
 ├── models/
 ├── gguf/
 ├── topology/
