@@ -3,15 +3,25 @@
 [![NICoLE](https://img.shields.io/badge/NICoLE-Presentation-blue)](https://docs.google.com/presentation/d/1LHkMz7mNkxGzYqVPaLeMySLA2KP4OjW1hrWsEONwt4c/edit?usp=sharing)
 [![NICoLE](https://img.shields.io/badge/NICoLE-Paper-yellow)](https://github.com/dcomp-leris/NiCoLE/blob/main/2026151137.pdf)
 
-
-
-
 *This paper was accepted and presented in the IFIP Networking 2026 Conference.*
 *This repository is run to present the NICoLE!*
 
 NICoLE (Network Inference for Congestion-aware Low-latency Optimization) is a compact LLM-based controller for congestion-aware RTP/WebRTC adaptive video streaming.
 
 <img width="905" height="448" alt="image" src="https://github.com/user-attachments/assets/ca4fed0d-30e6-4007-b111-758d7931fa8a" />
+
+
+
+# Requirements
+
+## 1 - WebRTC + GCC 
+- Go to Gst_WebRTC
+- Run sender/receiver and signalling
+
+        cd ./Gst_WebRTC
+  
+## 2 - L4S/DualQ Support device
+
 
 
 NICoLE predicts:
