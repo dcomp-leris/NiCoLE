@@ -302,7 +302,7 @@ sudo iptables -D FORWARD -i enp8s0 -o enp7s0 -j NFQUEUE --queue-num 1
 
 ### Cite
 ```text
-- Alireza Shirmarz, Fabio Luciano Verdi, Gyanesh Patra, Gergely Pongracz,"**NICoLE**: Are In-Network LLM-Based Agents
+- Alireza Shirmarz, Fabio Luciano Verdi, Gyanesh Patra, Gergely Pongracz,"NICoLE: Are In-Network LLM-Based Agents
 Cost-Feasible for RTP Video Streaming?", IEEE/IFIP Networking, Switzerland 2026.
 
 ```
