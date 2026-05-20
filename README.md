@@ -4,6 +4,7 @@
 [![NICoLE](https://img.shields.io/badge/NICoLE-Paper-yellow)](https://github.com/dcomp-leris/NiCoLE/blob/main/2026151137.pdf)
 [![NICoLE](https://img.shields.io/badge/NICoLE-Huggingface-green)](https://huggingface.co/alirezashirmarz/NICoLE-LLM)
 [![NICoLE](https://img.shields.io/badge/NICoLE-Conference-red)](https://networking.ifip.org/2026/index.php/program/detailed-program)
+[![NICoLE](https://img.shields.io/badge/NICoLE-L4SEnabledLinux-orange)](https://github.com/L4STeam/linux.git)
 
 
 
@@ -14,7 +15,7 @@
 # Requirements & Componenets
 **Host Computer**
 ```text
-sudo apt update
+sudo apt update &&
 sudo apt install -y python3-gi python3-websockets gstreamer1.0-tools \
 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
 gstreamer1.0-plugins-bad gstreamer1.0-libav
@@ -22,8 +23,8 @@ gstreamer1.0-plugins-bad gstreamer1.0-libav
 
 **L4S Enabled Router**
 ```text
-sudo apt update
-sudo apt install -y python3-pip python3-netfilterqueue iptables iproute2
+sudo apt update &&
+sudo apt install -y python3-pip python3-netfilterqueue iptables iproute2 &&
 sudo pip3 install scapy llama-cpp-python
 ```
 
@@ -33,7 +34,7 @@ sudo pip3 install scapy llama-cpp-python
 
         cd ./Gst_WebRTC
   
-## 2 - L4S/DualQ Support device
+## 2 - L4S/DualQ Enabled device
 
         cd ./vm_conf
 
