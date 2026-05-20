@@ -11,6 +11,9 @@
 *This paper was accepted and will be presented in the IFIP Networking 2026 Conference on 2026/05/24.*
 
 **Note**: NICoLE (Network Inference for Congestion-aware Low-latency Optimization) is a compact LLM-based controller for congestion-aware RTP/WebRTC adaptive video streaming.
+<img width="1012" height="554" alt="image" src="https://github.com/user-attachments/assets/3afd9134-2434-4bfa-b8d9-295981793263" />
+
+
 
 # Prerequirements Installation
 **Host Computer**
