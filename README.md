@@ -35,11 +35,11 @@ NICoLE (Network Inference for Congestion-aware Low-latency Optimization) is a co
 - Go to the huggingface and find the following fine-tuned model!
 
 
-HF Model:
+Huggingface (HF Model):
 
           alirezashirmarz/NICoLE-LLM 
           
-GGUF Model:
+Huggingface (GGUF Model):
 
         alirezashirmarz/NICoLE-LLM-GGUF
 
@@ -47,15 +47,6 @@ Download and add models (HF & GGUF) to this project:
 
         cd ./models
         git clone https://huggingface.co/alirezashirmarz/NICoLE-LLM
-        
-
-**NICoLE predicts**:
-
-* ECN
-* Current Profile (CP)
-* Next Profile (NP)
-
-from RTP packetization and queue telemetry using compact symbolic prompting.
 
 **The project demonstrates**:
 
@@ -84,205 +75,54 @@ from RTP packetization and queue telemetry using compact symbolic prompting.
 
 ```text
 NICoLE/
-├── Gst_WebRTC/
-├── models/
-├── gguf/
-├── topology/
-├── webrtc/
-├── inference/
-├── scripts/
-├── results/
-└── README.md
+├── 2026151137.pdf
+├── Gst_WebRTC
+│   ├── README.md
+│   ├── receiver.py
+│   ├── sender.py
+│   └── server.py
+├── models
+│   ├── NICoLE-LLM
+│   │   ├── config.json
+│   │   ├── generation_config.json
+│   │   ├── model.safetensors
+│   │   ├── nicole-f16.gguf
+│   │   ├── nicole-q4.gguf
+│   │   ├── README.md
+│   │   ├── special_tokens_map.json
+│   │   ├── tokenizer_config.json
+│   │   ├── tokenizer.json
+│   │   └── tokenizer.model
+│   ├── nicole-q4.gguf
+│   └── README.md
+├── README.md
+├── requirements-host.txt
+├── requirements-vm.txt
+├── Topo
+│   ├── CONFIG_REFERENCE.md
+│   ├── QUICK_START.md
+│   ├── quick_start.sh
+│   ├── README_L4S_SETUP.md
+│   ├── README.md
+│   ├── README_SETUP_GUIDE.md
+│   ├── README_SHORT.md
+│   ├── setup_router.sh
+│   ├── setup_topology.sh
+│   ├── test_topology.sh
+│   ├── topo1.py
+│   └── validate_setup.sh
+└── vm_conf
+    ├── nicole_agent.py
+    └── __pycache__
+        └── nicole_agent.cpython-312.pyc
 ```
 
----
+# NICoLE End-to-End Setup 
 
-# Topology
-
-```text
-Sender ---- Router/Bottleneck ---- Receiver
-                 |
-          Background Traffic
-```
-
-* Bottleneck bandwidth: 40 Mbps
-* Background traffic: up to 38 Mbps
-* Streaming: RTP/WebRTC
-* Adaptive profiles: P0/P1/P2/P3
-
----
-
-# Profiles
-
-| Profile | Resolution | FPS                |
-| ------- | ---------- | ------------------ |
-| P0      | 3840×2160  | 30 / 60 / 90 / 120 |
-| P1      | 1920×1080  | 30 / 60 / 90 / 120 |
-| P2      | 1280×720   | 30 / 60 / 90 / 120 |
-| P3      | 640×360    | 30 / 60 / 90 / 120 |
-
-GoP duration:
-
-* 2 seconds
-
----
-
-# Prompt Format
-
-Input order:
-
-```text
-PS FS IFGS IFGR CQ LQ E
-```
-
-Output order:
-
-```text
-E C N
-```
-
-Example:
-
-```text
-I:PS FS IFGS IFGR CQ LQ E
-O:E C N
-
-U:1400,40,34,33,2,0,0
-
-A:
-```
-
-Expected output:
-
-```text
-0,1,1
-```
-
----
-
-# Quick Start
-
-## Clone Repository
-
-```bash
-git clone https://github.com/YOUR_USERNAME/NICoLE.git
-cd NICoLE
-```
-
----
-
-# Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-# Hugging Face Inference
-
-```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-model_id = "YOUR_USERNAME/NICoLE-LLM"
-
-tok = AutoTokenizer.from_pretrained(model_id)
-
-model = AutoModelForCausalLM.from_pretrained(
-    model_id,
-    device_map="auto"
-)
-
-prompt = """I:PS FS IFGS IFGR CQ LQ E
-O:E C N
-
-U:1400,40,34,33,2,0,0
-
-A:"""
-
-inputs = tok(prompt, return_tensors="pt").to(model.device)
-
-out = model.generate(
-    **inputs,
-    max_new_tokens=6,
-    do_sample=False
-)
-
-print(tok.decode(out[0], skip_special_tokens=True))
-```
-
----
-
-# GGUF / llama.cpp
-
-```bash
-./llama-cli \
--no-cnv \
--t 4 \
--m nicole-q4.gguf \
--p "I:PS FS IFGS IFGR CQ LQ E
-O:E C N
-
-U:1400,40,34,33,2,0,0
-
-A:" \
--n 6 \
---temp 0 \
---top-k 1
-```
-
----
-
-# CPU Benchmark
-
-| Threads | Response (ms) | Decisions/sec |
-| ------- | ------------- | ------------- |
-| 1       | 1325          | 0.75          |
-| 2       | 624           | 1.60          |
-| 4       | 343           | 2.91          |
-| 8       | 904           | 1.11          |
-
-Best deployment:
-
-* 4 threads
-* 343 ms response time
-* 2.91 decisions/sec
-
----
-
-# Dataset
-
-The dataset was generated using:
-
-* RTP/WebRTC streaming
-* dynamic bandwidth reduction
-* congestion-induced adaptation
-* QoE-aware profile switching
-
-QoE metrics:
-
-* VMAF
-* receiver FPS
-* stall ratio
-
----
-
-# Citation
-
-```bibtex
-@misc{nicole,
-  title={NICoLE: Congestion-Aware LLM Controller for RTP/WebRTC Streaming},
-  author={Alireza Shirmarz},
-  year={2026}
-}
-```
+## NiCoLE Router VM and Host Experiment README
 
 
-
-# NiCoLE Router VM and Host Experiment README
-
-
-## Router VM setup
+### Router VM setup
 
 1) Install required packages
 
@@ -334,7 +174,7 @@ It samples every `0.4s`, extracts `PS`, `FS`, `IFGS`, `IFGR`, `CQ`, `LQ`, `E`, r
 
 ---
 
-## Host setup and scenario run
+### Host setup and scenario run
 
 1) Prepare the Mininet topology
 
@@ -363,9 +203,9 @@ h2 → 192.168.200.10 (client / receiver)
 
 ---
 
-## Traffic scenario for experiment
+### Traffic scenario for experiment
 
-### A) Start iperf3 traffic from `h0` to `h2`
+#### A) Start iperf3 traffic from `h0` to `h2`
 
 In Mininet CLI:
 
@@ -376,7 +216,7 @@ h0 iperf3 -c 192.168.200.10 -u -b 35M -t 60 &
 
 This makes `h0` the sender and `h2` the receiving client.
 
-### B) Start WebRTC video from `h1` to `h2`
+#### B) Start WebRTC video from `h1` to `h2`
 
 Use your existing `Gst_WebRTC` modules:
 
@@ -408,17 +248,17 @@ h2 python3 /home/alireza/Myprojects/NiCoLE/Gst_WebRTC/receiver.py &
 
 ---
 
-## Collecting the experiment
+### Collecting the experiment
 
-### Check the agent log
+#### Check the agent log
 
 On the router VM:
 
 ```bash
-tail -f /home/alireza/Myprojects/NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv
+tail -f ~nicole_agent/nicole_agent_flow_log.csv
 ```
 
-### Verify bottleneck shaping
+#### Verify bottleneck shaping
 
 On the router VM:
 
@@ -426,11 +266,11 @@ On the router VM:
 sudo tc -s qdisc show dev enp8s0
 ```
 
-### Stop the agent cleanly
+#### Stop the agent cleanly
 
 Press `Ctrl-C` in the NICoLE agent terminal.
 
-### Clear NFQUEUE rules when done
+#### Clear NFQUEUE rules when done
 
 ```bash
 sudo iptables -D FORWARD -i enp7s0 -o enp8s0 -j NFQUEUE --queue-num 1
@@ -439,7 +279,7 @@ sudo iptables -D FORWARD -i enp8s0 -o enp7s0 -j NFQUEUE --queue-num 1
 
 ---
 
-## Summary
+### Summary
 
 - `h0` = iperf3 traffic generator
 - `h1` = WebRTC video source
