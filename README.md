@@ -160,15 +160,15 @@ sudo iptables -I FORWARD -i enp8s0 -o enp7s0 -j NFQUEUE --queue-num 1
 5) Run the NICoLE agent
 
 ```bash
-sudo python3 ~/NiCoLE/vm_conf/nicole_agent.py \
+sudo python3 ./NiCoLE/vm_conf/nicole_agent.py \
     --iface enp8s0 \
-    --model ~/NiCoLE/models/nicole-q4.gguf \
+    --model ./NiCoLE/models/nicole-q4.gguf \
     --marking
 ```
 
 The agent logs results to:
 
-`~/NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv`
+`./NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv`
 
 It samples every `0.4s`, extracts `PS`, `FS`, `IFGS`, `IFGR`, `CQ`, `LQ`, `E`, runs the GGUF model, and applies DSCP/ECN marking.
 
@@ -230,20 +230,20 @@ Example:
 
 ```bash
 # On a machine reachable by h1/h2
-cd /home/alireza/Myprojects/NiCoLE/Gst_WebRTC
+cd ./NiCoLE/Gst_WebRTC
 python3 server.py
 ```
 
 Then on `h1`:
 
 ```bash
-h1 python3 /home/alireza/Myprojects/NiCoLE/Gst_WebRTC/sender.py &
+h1 python3 ./NiCoLE/Gst_WebRTC/sender.py &
 ```
 
 And on `h2`:
 
 ```bash
-h2 python3 /home/alireza/Myprojects/NiCoLE/Gst_WebRTC/receiver.py &
+h2 python3 ./NiCoLE/Gst_WebRTC/receiver.py &
 ```
 
 ---
@@ -255,7 +255,7 @@ h2 python3 /home/alireza/Myprojects/NiCoLE/Gst_WebRTC/receiver.py &
 On the router VM:
 
 ```bash
-tail -f ~nicole_agent/nicole_agent_flow_log.csv
+tail -f ./NiCoLE/nicole_agent/nicole_agent_flow_log.csv
 ```
 
 #### Verify bottleneck shaping
@@ -285,5 +285,5 @@ sudo iptables -D FORWARD -i enp8s0 -o enp7s0 -j NFQUEUE --queue-num 1
 - `h1` = WebRTC video source
 - `h2` = watched client
 - Router bottleneck `enp8s0` = 40 Mbps
-- Agent file = `/home/alireza/Myprojects/NiCoLE/vm_conf/nicole_agent.py`
-- Log output = `/home/alireza/Myprojects/NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv`
+- Agent file = `./NiCoLE/vm_conf/nicole_agent.py`
+- Log output = `./NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv`
