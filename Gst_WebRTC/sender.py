@@ -14,7 +14,7 @@ Gst.init(None)
 
 ## Encoder Configuration (Default values)
 ENCODER_CONFIG = {
-    "codec": "h264",   # vp8 / h264
+    "codec": "vp8",   # vp8 / h264
 
     # common
     "bitrate": 3000,        # kbps (h264) / bps (vp8)
@@ -29,8 +29,8 @@ ENCODER_CONFIG = {
     "bframes": 0,
 
     # Quantization Parameter (QP)
-    "qp_min": 70,
-    "qp_max": 80,
+    "qp_min": 20,
+    "qp_max": 40,
 
     # vp8 specific
     "deadline": 1,
@@ -40,8 +40,8 @@ cfg = ENCODER_CONFIG  # define the object from the dictionary!
 
 
 ## Video Codec/Source Selection + Files for straming! 
-CODEC = "h264"   # change here: vp8 / h264
-SOURCE = "files"   # test / webcam / files
+CODEC = "vp8"   # change here: vp8 / h264
+SOURCE = "test" #"files"   # test / webcam / files
 MY_PNG = "/home/alireza/mycg/CGReplay/Sources/Kombat/%04d.png"
 WIDTH , HEIGHT = cfg["width"] , cfg["height"] 
 FPS = cfg["fps"] # this only used for files state
@@ -70,6 +70,20 @@ elif SOURCE == "files":
 
 if cfg["codec"] == "h264":
     ENC = (
+        f"x264enc "
+        f"bitrate={cfg['bitrate']} "
+        f"key-int-max={cfg['gop']} "
+        f"qp-min={cfg['qp_min']} "
+        f"qp-max={cfg['qp_max']} "
+        f"speed-preset={cfg['preset']} "
+        f"tune={cfg['tune']} "
+        f"bframes={cfg['bframes']} ! "
+        f"rtph264pay config-interval=1 pt=96 "
+    )
+
+    CAPS = "application/x-rtp,media=video,encoding-name=H264,payload=96"
+    '''
+    ENC = (
         f"x264enc "  # CPU-only -> "x264enc" | GPU (NVIDIA) -> "nvh264enc"  | GPU (Intel) -> "vaapih264enc" 
         f"bitrate={cfg['bitrate']} "
         f"key-int-max={cfg['gop']} "
@@ -82,7 +96,7 @@ if cfg["codec"] == "h264":
     )
 
     CAPS = "application/x-rtp,media=video,encoding-name=H264,payload=96"
-
+    '''
 
 elif cfg["codec"] == "vp8":
     ENC = (
@@ -111,10 +125,25 @@ elif CODEC == "h264":
 """
 ##########################################################################################
 
+#PIPE = f"""
+#webrtcbin name=send bundle-policy=max-bundle
+#{SRC} ! {ENC} ! {CAPS} ! send.
+#""".replace("\n", " ")
+
+
+
+
+
+#PIPE = f"""
+#webrtcbin name=sendrecv bundle-policy=max-bundle
+#{SRC} ! videoconvert ! queue ! {ENC} ! {CAPS} ! sendrecv.
+#""".replace("\n", " ")
+
 PIPE = f"""
-webrtcbin name=send bundle-policy=max-bundle
-{SRC} ! {ENC} ! {CAPS} ! send.
+webrtcbin name=sendrecv bundle-policy=max-bundle
+{SRC} ! videoconvert ! queue ! {ENC} ! {CAPS} ! application/x-rtp,payload=96 ! queue ! sendrecv.
 """.replace("\n", " ")
+
 
 """
 PIPE = f'''
@@ -161,7 +190,7 @@ class Sender:
     async def run(self):
         self.loop = asyncio.get_running_loop()
         # just change it to server IP and Port, so that's enough!
-        self.ws = await websockets.connect("ws://127.0.0.1:8765")
+        self.ws = await websockets.connect("ws://192.168.100.11:8765") #("ws://127.0.0.1:8765")
 
         self.webrtc.connect("on-negotiation-needed", self.on_negotiation)
         self.webrtc.connect("on-ice-candidate", self.on_ice)

@@ -1,548 +1,370 @@
+#!/usr/bin/env python3
+"""
+NICoLE VM agent for router-based RTP/WebRTC flow telemetry and DSCP/ECN control.
+
+This script runs on the router VM and watches flows across the bottleneck interface.
+It extracts the requested features in 400 ms windows, sends them to a local GGUF model,
+and applies ECN/DSCP actions when conditions persist.
+
+Requirements on the router VM:
+  sudo apt install python3-pip python3-netfilterqueue
+  pip3 install scapy llama-cpp-python
+  sudo iptables -I FORWARD -i enp7s0 -o enp8s0 -j NFQUEUE --queue-num 1
+  sudo iptables -I FORWARD -i enp8s0 -o enp7s0 -j NFQUEUE --queue-num 1
+
+Run:
+  sudo python3 ~/nicole_agent/nicole_agent.py \
+      --iface enp8s0 \
+      --model ~/nicole_agent/nicole-q4.gguf \
+      --marking
+"""
+
 import argparse
+import binascii
 import csv
 import os
-import socket
-import struct
+import re
+import signal
 import subprocess
+import sys
+import threading
 import time
-from collections import deque
-
-# CONFIG
-LISTEN_IP = "0.0.0.0"
-LISTEN_PORT = 4000
-FORWARD_IP = "192.168.200.10"
-FORWARD_PORT = 5004
-RTP_CLOCK_RATE = 90000
-LINK_CAPACITY_KBPS = 12000
-LOG_DIR = "output"
-LOG_FILE = "switch_rtp_log.csv"
-FLOW_RATE_INTERVAL = 0.01  # 10 ms
-QUEUE_POLL_INTERVAL = 0.1
-BW_WINDOW_SEC = 2.0
-UPGRADE_HOLD_SEC = 3.0
-PROFILE_HOLD_SEC = 5.0
-UPGRADE_SUSTAIN_SEC = 5.0
-SMALL_MARGIN_RATIO = 0.1
-BW_FIT_LOW = 0.6
-BW_FIT_HIGH = 0.7
-QNET_UP = 1.2
-QNET_OK = 0.8
-QNET_STRESS = 0.6
-BACKLOG_ECN_THRESHOLD = 5
-ECN_HOLD_SEC = 2.0
-HEALTH_INTERVAL_SEC = 5.0
-CLASSIC_BACKLOG_LOW_PKTS = 2
-CLASSIC_BACKLOG_HIGH_PKTS = 20
-FPS_DIFF_UP = 1.0
-FPS_DIFF_DOWN = 1.0
-FRAME_PKT_HIGH = 60
-FRAME_PKT_FIT = 40
-STATE_HOLD_SEC = 0.5
-BOTTLENECK_IFACE = "enp8s0"
-
-# Args
-parser = argparse.ArgumentParser()
-parser.add_argument("--marking", action="store_true", help="Enable ECN and DSCP marking")
-parser.add_argument("--listen-port", type=int, default=LISTEN_PORT)
-parser.add_argument("--forward-ip", default=FORWARD_IP)
-parser.add_argument("--forward-port", type=int, default=FORWARD_PORT)
-parser.add_argument("--log-dir", default=LOG_DIR)
-parser.add_argument("--log-file", default=LOG_FILE)
-parser.add_argument("--iface", default=BOTTLENECK_IFACE)
-parser.add_argument("--profiles", default="profiles.yaml")
-parser.add_argument("--poll-interval", type=float, default=QUEUE_POLL_INTERVAL)
-parser.add_argument("--bw-window", type=float, default=BW_WINDOW_SEC)
-parser.add_argument("--upgrade-hold-sec", type=float, default=UPGRADE_HOLD_SEC)
-parser.add_argument("--profile-hold-sec", type=float, default=PROFILE_HOLD_SEC,
-                    help="Minimum seconds between profile changes (lets GCC settle)")
-parser.add_argument("--upgrade-sustain-sec", type=float, default=UPGRADE_SUSTAIN_SEC,
-                    help="Require sustained bandwidth before upgrading profile/FPS")
-parser.add_argument("--small-margin-ratio", type=float, default=SMALL_MARGIN_RATIO)
-parser.add_argument("--bw-fit-low", type=float, default=BW_FIT_LOW)
-parser.add_argument("--bw-fit-high", type=float, default=BW_FIT_HIGH)
-parser.add_argument("--qnet-up", type=float, default=QNET_UP)
-parser.add_argument("--qnet-ok", type=float, default=QNET_OK)
-parser.add_argument("--qnet-stress", type=float, default=QNET_STRESS)
-parser.add_argument("--backlog-low-pkts", type=int, default=CLASSIC_BACKLOG_LOW_PKTS)
-parser.add_argument("--backlog-high-pkts", type=int, default=CLASSIC_BACKLOG_HIGH_PKTS)
-parser.add_argument("--backlog-ecn-threshold", type=int, default=BACKLOG_ECN_THRESHOLD,
-                    help="Avg backlog (pkts) threshold to force ECN=3")
-parser.add_argument("--ecn-hold-sec", type=float, default=ECN_HOLD_SEC,
-                    help="Seconds to hold ECN=3 once backlog threshold is exceeded")
-parser.add_argument("--fps-diff-up", type=float, default=FPS_DIFF_UP)
-parser.add_argument("--fps-diff-down", type=float, default=FPS_DIFF_DOWN)
-parser.add_argument("--frame-pkt-high", type=int, default=FRAME_PKT_HIGH)
-parser.add_argument("--frame-pkt-fit", type=int, default=FRAME_PKT_FIT)
-parser.add_argument("--state-hold-sec", type=float, default=STATE_HOLD_SEC)
-parser.add_argument("--base-target-fps", type=int, choices=[30, 60, 90, 120], default=None,
-                    help="Lock the maximum FPS; if set, upgrades never exceed this value")
-args = parser.parse_args()
-
-print(f"📡 Switch running: {args.listen_port} → {args.forward_ip}:{args.forward_port}")
-print(f"🧠 Intelligent marking: {args.marking}")
-
-os.makedirs(args.log_dir, exist_ok=True)
+from collections import deque, defaultdict
 
 try:
-    import yaml
-    with open(args.profiles, "r") as f:
-        profiles = yaml.safe_load(f).get("profiles", [])
-except Exception:
-    profiles = []
+    from netfilterqueue import NetfilterQueue
+    from scapy.all import IP, UDP, TCP, Raw
+except ImportError as exc:
+    print("Missing required Python modules:", exc)
+    print("Install: sudo apt install python3-netfilterqueue && pip3 install scapy")
+    sys.exit(1)
 
-recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-recv_sock.bind((LISTEN_IP, args.listen_port))
-forward_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    from llama_cpp import Llama
+except ImportError:
+    Llama = None
 
-csv_path = os.path.join(args.log_dir, args.log_file)
-with open(csv_path, "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow([
-        "frame_id", "timestamp", "fps_switch", "fps_server", "rtp_seq", "rtp_ts",
-        "frame_pkt_count", "frame_bytes",
-        "flow_rate_kbps", "dscp_marked", "ecn_marked",
-        "tbf_backlog_pkts", "tbf_backlog_bytes",
-        "dualpi2_backlog_pkts", "dualpi2_backlog_bytes",
-        "tbf_rate_kbps", "tbf_sent_bytes", "tbf_dropped",
-        "dualpi2_dropped", "avail_kbps",
-        "target_fps", "target_profile",
-        "min_marker_pkt_size", "min_non_marker_pkt_size"
-    ])
+RTP_CLOCK_RATE = 90000
+WINDOW_SEC = 0.4
+QUEUE_POLL_SEC = 0.1
+PROFILE_DSCP = {0: 32, 1: 34, 2: 40, 3: 46}
 
-# State
-frame_id = 0
-frame_bytes = 0
-frame_pkt_count = 0
-pkt_sizes = []
-last_rtp_ts = None
-last_marker_time = None
-flow_window = deque()
-flow_bytes = 0
-flow_start = time.time()
-last_queue_poll = 0.0
-tbf_backlog_pkts = 0
-tbf_backlog_bytes = 0
-dualpi2_backlog_pkts = 0
-dualpi2_backlog_bytes = 0
-tbf_rate_kbps = 0.0
-tbf_sent_bytes = 0
-tbf_dropped = 0
-dualpi2_dropped = 0
-avail_kbps = 0.0
-state = "normal"
-state_until = 0.0
-min_marker_pkt_size = None
-min_non_marker_pkt_size = None
-current_dscp = 36
-current_ecn = 0
-last_health_time = time.time()
-target_fps = None
-target_profile = None
-current_profile = None
-base_target_fps = args.base_target_fps
-last_fps_change = 0.0
-last_profile_change = 0.0
-sent_history = deque()
-fps_switch_hist = deque()
-avail_hist = deque()
-qnet_hist = deque()
-backlog_hist = deque()
-ecn_force_until = 0.0
+parser = argparse.ArgumentParser(description="NICoLE VM flow agent")
+parser.add_argument("--iface", default="enp8s0", help="Bottleneck interface on router VM")
+parser.add_argument("--model", default="~/nicole_agent/nicole-q4.gguf",
+                    help="Path to GGUF model")
+parser.add_argument("--queue-num", type=int, default=1, help="NFQUEUE queue number")
+parser.add_argument("--marking", action="store_true", help="Enable ECN/DSCP marking")
+parser.add_argument("--log-dir", default="~/nicole_agent/logs")
+parser.add_argument("--log-file", default="nicole_agent_flow_log.csv")
+args = parser.parse_args()
 
-def parse_rtp(pkt: bytes):
-    if len(pkt) < 12:
+if Llama is None:
+    print("Missing llama_cpp. Install with: pip3 install llama-cpp-python")
+    sys.exit(1)
+
+os.makedirs(args.log_dir, exist_ok=True)
+log_path = os.path.join(args.log_dir, args.log_file)
+
+model = Llama(model_path=args.model)
+
+lock = threading.Lock()
+flow_states = {}
+queue_samples = deque()
+last_rollup = time.time()
+running = True
+nfqueue = None
+
+class FlowState:
+    def __init__(self, flow_key):
+        self.flow_key = flow_key
+        self.flow_id = crc16("|".join(map(str, flow_key)).encode())
+        self.packet_sizes = deque()
+        self.ecn_bits = deque()
+        self.frame_sizes = deque()
+        self.ifgs = deque()
+        self.ifgr = deque()
+        self.last_marker_time = None
+        self.last_marker_ts = None
+        self.current_frame_bytes = 0
+        self.last_decision = None
+        self.repeat_count = 0
+        self.active_action = None
+        self.latest_model_output = None
+
+    def prune(self, cutoff):
+        while self.packet_sizes and self.packet_sizes[0][0] < cutoff:
+            self.packet_sizes.popleft()
+        while self.ecn_bits and self.ecn_bits[0][0] < cutoff:
+            self.ecn_bits.popleft()
+        while self.frame_sizes and self.frame_sizes[0][0] < cutoff:
+            self.frame_sizes.popleft()
+        while self.ifgs and self.ifgs[0][0] < cutoff:
+            self.ifgs.popleft()
+        while self.ifgr and self.ifgr[0][0] < cutoff:
+            self.ifgr.popleft()
+
+    def add_packet(self, ts, pkt_len, ecn_flag, rtp_marker=None, rtp_ts=None):
+        self.packet_sizes.append((ts, pkt_len))
+        self.ecn_bits.append((ts, 1 if ecn_flag else 0))
+        self.current_frame_bytes += pkt_len
+        if rtp_marker is None:
+            return
+        if rtp_marker == 1:
+            self.frame_sizes.append((ts, self.current_frame_bytes))
+            self.current_frame_bytes = 0
+            if self.last_marker_time is not None:
+                self.ifgs.append((ts - self.last_marker_time, ts))
+            self.last_marker_time = ts
+            if self.last_marker_ts is not None and rtp_ts is not None:
+                diff = (rtp_ts - self.last_marker_ts) / RTP_CLOCK_RATE
+                if diff > 0:
+                    self.ifgr.append((diff, ts))
+            self.last_marker_ts = rtp_ts
+
+    def snapshot(self, cutoff):
+        self.prune(cutoff)
+        packet_count = len(self.packet_sizes)
+        ps_avg = (sum(v for _, v in self.packet_sizes) / packet_count) if packet_count else 0.0
+        fs_avg = (sum(v for _, v in self.frame_sizes) / len(self.frame_sizes)) if self.frame_sizes else 0.0
+        ifgs_avg = (sum(v for v, _ in self.ifgs) / len(self.ifgs)) if self.ifgs else 0.0
+        ifgr_avg = (sum(v for v, _ in self.ifgr) / len(self.ifgr)) if self.ifgr else 0.0
+        e_avg = (sum(v for _, v in self.ecn_bits) / len(self.ecn_bits)) if self.ecn_bits else 0.0
+        return {
+            "flow_id": self.flow_id,
+            "packets": packet_count,
+            "ps_avg": ps_avg,
+            "fs_avg": fs_avg,
+            "ifgs_avg": ifgs_avg,
+            "ifgr_avg": ifgr_avg,
+            "ecn_avg": e_avg,
+        }
+
+    def update_decision(self, decision):
+        if decision == self.last_decision:
+            self.repeat_count += 1
+        else:
+            self.last_decision = decision
+            self.repeat_count = 1
+        if self.repeat_count >= 2 and decision is not None:
+            n, ecn_pred = decision
+            self.active_action = (PROFILE_DSCP.get(n, 36), 1)
+        else:
+            self.active_action = None
+
+    def __repr__(self):
+        return f"FlowState({self.flow_key}, id={self.flow_id}, action={self.active_action})"
+
+
+def crc16(data: bytes) -> int:
+    return binascii.crc_hqx(data, 0) & 0xFFFF
+
+
+def parse_rtp(payload: bytes):
+    if len(payload) < 12:
         return None
-    _, b2, seq, ts, ssrc = struct.unpack("!BBHII", pkt[:12])
+    b1, b2 = payload[0], payload[1]
+    version = b1 >> 6
+    if version != 2:
+        return None
     marker = (b2 >> 7) & 1
-    return marker, seq, ts, ssrc
+    seq = int.from_bytes(payload[2:4], "big")
+    ts = int.from_bytes(payload[4:8], "big")
+    return marker, seq, ts
 
-def set_dscp_ecn(pkt: bytes, dscp_val: int, ecn_val: int):
-    if len(pkt) < 20 or (pkt[0] >> 4) != 4:
-        return pkt
-    ip = bytearray(pkt[:20])
-    ip[1] = ((dscp_val & 0x3F) << 2) | (ecn_val & 0x03)
-    # Recalculate IP checksum
-    ip[10] = 0
-    ip[11] = 0
-    s = sum((ip[i] << 8) + ip[i+1] for i in range(0, 20, 2))
-    s = (s >> 16) + (s & 0xFFFF)
-    s = ~((s >> 16) + s) & 0xFFFF
-    ip[10] = s >> 8
-    ip[11] = s & 0xFF
-    return bytes(ip) + pkt[20:]
 
-def set_socket_tos(sock, dscp_val: int, ecn_val: int):
-    tos = ((dscp_val & 0x3F) << 2) | (ecn_val & 0x03)
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, tos)
-
-def _parse_backlog(line: str):
-    parts = line.split()
-    for i, token in enumerate(parts):
-        if token == "backlog" and i + 2 < len(parts):
-            b = parts[i + 1]
-            p = parts[i + 2]
-            bytes_val = 0
-            pkts_val = 0
-            if b.endswith("b"):
-                try:
-                    bytes_val = int(b[:-1])
-                except ValueError:
-                    bytes_val = 0
-            if p.endswith("p"):
-                try:
-                    pkts_val = int(p[:-1])
-                except ValueError:
-                    pkts_val = 0
-            return pkts_val, bytes_val
-    return None
-
-def _parse_rate_kbps(line: str):
-    parts = line.split()
-    if "rate" in parts:
-        i = parts.index("rate")
-        if i + 1 < len(parts):
-            token = parts[i + 1]
-            if token.endswith("Mbit"):
-                try:
-                    return float(token[:-4]) * 1000.0
-                except ValueError:
-                    return 0.0
-            if token.endswith("Kbit"):
-                try:
-                    return float(token[:-4])
-                except ValueError:
-                    return 0.0
-    return 0.0
-
-def _parse_sent_dropped(line: str):
-    # Example: Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0)
-    parts = line.replace(",", "").split()
-    sent_bytes = None
-    dropped = None
-    if "Sent" in parts:
-        try:
-            sent_idx = parts.index("Sent")
-            sent_bytes = int(parts[sent_idx + 1])
-        except Exception:
-            sent_bytes = None
-    if "dropped" in parts:
-        try:
-            drop_idx = parts.index("dropped")
-            dropped = int(parts[drop_idx + 1])
-        except Exception:
-            dropped = None
-    return sent_bytes, dropped
-
-def poll_dual_queue():
-    try:
-        output = subprocess.check_output(
-            ["tc", "-s", "qdisc", "show", "dev", args.iface],
-            text=True
-        )
-    except Exception:
-        return 0, 0, 0, 0, 0.0, 0, 0, 0
-
-    tbf_pkts = tbf_bytes = 0
-    dual_pkts = dual_bytes = 0
-    tbf_rate = 0.0
-    tbf_sent = 0
-    tbf_drop = 0
-    dual_drop = 0
-    current_qdisc = None
-
+def parse_queue_backlog(output: str):
+    classic_pkts = 0
+    l4s_pkts = 0
+    current = None
     for line in output.splitlines():
         line = line.strip()
         if line.startswith("qdisc "):
-            parts = line.split()
-            current_qdisc = parts[1] if len(parts) > 1 else None
-            if current_qdisc == "tbf":
-                tbf_rate = _parse_rate_kbps(line)
+            current = line.split()[1]
             continue
-        if line.startswith("Sent") and current_qdisc:
-            sent_bytes, dropped = _parse_sent_dropped(line)
-            if current_qdisc == "tbf":
-                if sent_bytes is not None:
-                    tbf_sent = sent_bytes
-                if dropped is not None:
-                    tbf_drop = dropped
-            elif current_qdisc == "dualpi2":
-                if dropped is not None:
-                    dual_drop = dropped
+        if "backlog" not in line:
             continue
-        if "backlog" in line and current_qdisc:
-            parsed = _parse_backlog(line)
-            if not parsed:
-                continue
-            pkts_val, bytes_val = parsed
-            if current_qdisc == "tbf":
-                tbf_pkts, tbf_bytes = pkts_val, bytes_val
-            elif current_qdisc == "dualpi2":
-                dual_pkts, dual_bytes = pkts_val, bytes_val
+        m = re.search(r"backlog\s+\S+\s+(\d+)p", line)
+        if not m:
+            continue
+        pkts = int(m.group(1))
+        if "classic" in line.lower() or (current and "classic" in current.lower()):
+            classic_pkts = pkts
+        elif "l4s" in line.lower() or (current and "l4s" in current.lower()):
+            l4s_pkts = pkts
+        elif current == "dualpi2":
+            classic_pkts = pkts
+    return classic_pkts, l4s_pkts
 
-    return tbf_pkts, tbf_bytes, dual_pkts, dual_bytes, tbf_rate, tbf_sent, tbf_drop, dual_drop
 
-def _avg_in_window(hist: deque, window_sec: float):
-    if not hist:
-        return 0.0
-    now = time.time()
-    while hist and now - hist[0][0] > window_sec:
-        hist.popleft()
-    if not hist:
-        return 0.0
-    return sum(v for _, v in hist) / len(hist)
-
-def _min_in_window(hist: deque, window_sec: float):
-    if not hist:
-        return 0.0
-    now = time.time()
-    while hist and now - hist[0][0] > window_sec:
-        hist.popleft()
-    if not hist:
-        return 0.0
-    return min(v for _, v in hist)
-
-def _profiles_for_fps(fps_target):
-    fps_profiles = [p for p in profiles if p.get("fps") == fps_target]
-    return sorted(fps_profiles, key=lambda p: p.get("bitrate_kbps", 0))
-
-def _choose_profile_for_fps(fps_target, bw_kbps):
-    fps_profiles = [p for p in profiles if p.get("fps") == fps_target]
-    if not fps_profiles:
-        return None
-    # Prefer highest bitrate within 0.7*bitrate <= bw
-    fit_profiles = [p for p in fps_profiles if bw_kbps >= args.bw_fit_high * p.get("bitrate_kbps", 0)]
-    if fit_profiles:
-        return max(fit_profiles, key=lambda p: p.get("bitrate_kbps", 0))
-    # If nothing fits, pick closest (but not above too much)
-    return min(fps_profiles, key=lambda p: abs(bw_kbps - p.get("bitrate_kbps", 0)))
-
-def _next_lower_profile(fps_profiles, current):
-    if current not in fps_profiles:
-        return None
-    idx = fps_profiles.index(current)
-    return fps_profiles[idx - 1] if idx > 0 else current
-
-def _next_higher_profile(fps_profiles, current):
-    if current not in fps_profiles:
-        return None
-    idx = fps_profiles.index(current)
-    return fps_profiles[idx + 1] if idx + 1 < len(fps_profiles) else current
-
-def _nearest_fps(targets, value):
-    return min(targets, key=lambda t: abs(t - value))
-
-def choose_marking(fps_switch, fps_server, frame_pkt_count, congested):
-    fps_diff = fps_server - fps_switch
-    # Drop: frame too large or severe congestion
-    if frame_pkt_count >= args.frame_pkt_high or congested >= 2:
-        return 46, 3, "drop"  # EF + CE
-    # Reduce: server faster than switch and queue congested
-    if fps_diff > args.fps_diff_down and congested:
-        return 48, 3, "reduce"  # CS6 + CE
-    # Increase: switch faster and queue clean
-    if (fps_switch - fps_server) > args.fps_diff_up and not congested:
-        return 34, 1, "up"  # AF41 + ECT(1)
-    # Normal
-    return 36, 0, "normal"  # AF42 + Not-ECT
-
-while True:
-    data, _ = recv_sock.recvfrom(1600)
-    now = time.time()
-    marker, seq, ts, ssrc = parse_rtp(data) or (None, None, None, None)
-
-    pkt_len = len(data)
-    frame_pkt_count += 1
-    frame_bytes += pkt_len
-    if marker == 1:
-        min_marker_pkt_size = pkt_len if min_marker_pkt_size is None else min(min_marker_pkt_size, pkt_len)
-    else:
-        min_non_marker_pkt_size = pkt_len if min_non_marker_pkt_size is None else min(min_non_marker_pkt_size, pkt_len)
-
-    flow_window.append((now, pkt_len))
-    flow_bytes += pkt_len
-
-    while flow_window and now - flow_window[0][0] > FLOW_RATE_INTERVAL:
-        old_t, old_size = flow_window.popleft()
-        flow_bytes -= old_size
-
-    flow_rate_kbps = (flow_bytes * 8) / 1000 / FLOW_RATE_INTERVAL
-    fps_switch = fps_server = 0.0
-    dscp_marked = 0
-    ecn_marked = 0
-
-    if now - last_queue_poll >= args.poll_interval:
-        tbf_backlog_pkts, tbf_backlog_bytes, dualpi2_backlog_pkts, dualpi2_backlog_bytes, tbf_rate_kbps, tbf_sent_bytes, tbf_dropped, dualpi2_dropped = poll_dual_queue()
-        last_queue_poll = now
-
-    congested = 1 if tbf_backlog_pkts > args.backlog_low_pkts else 0
-    if tbf_backlog_pkts >= args.backlog_high_pkts:
-        congested = 2
-
-    if marker == 1:
-        # FPS estimation
-        if last_marker_time:
-            dt = now - last_marker_time
-            if dt > 0:
-                fps_switch = 1.0 / dt
-        last_marker_time = now
-
-        if last_rtp_ts:
-            rtp_diff = ts - last_rtp_ts
-            if rtp_diff > 0:
-                fps_server = RTP_CLOCK_RATE / rtp_diff
-        last_rtp_ts = ts
-
-        fps_switch_hist.append((now, fps_switch))
-        avg_fps_switch = _avg_in_window(fps_switch_hist, args.bw_window)
-
-        if target_fps is None:
-            target_fps = _nearest_fps([30, 60, 90, 120], avg_fps_switch or fps_server or 30)
-            if base_target_fps is None:
-                base_target_fps = target_fps
-        if base_target_fps is not None and target_fps > base_target_fps:
-            target_fps = base_target_fps
-
-        # Compute available bandwidth from tc stats (2s window)
-        sent_history.append((now, tbf_sent_bytes))
-        while sent_history and now - sent_history[0][0] > args.bw_window:
-            sent_history.popleft()
-        throughput_kbps = 0.0
-        if len(sent_history) >= 2:
-            t0, b0 = sent_history[0]
-            t1, b1 = sent_history[-1]
-            dt = max(t1 - t0, 1e-6)
-            throughput_kbps = ((b1 - b0) * 8.0) / 1000.0 / dt
-
-        backlog_increasing = False
-        if len(sent_history) >= 2:
-            backlog_increasing = tbf_backlog_pkts > args.backlog_low_pkts
-
-        if tbf_dropped > 0 or dualpi2_dropped > 0:
-            avail_kbps = 0.0
-        elif tbf_backlog_pkts == 0 and tbf_dropped == 0 and dualpi2_dropped == 0:
-            avail_kbps = max(tbf_rate_kbps - throughput_kbps, 0.0)
-        elif backlog_increasing:
-            avail_kbps = tbf_rate_kbps * args.small_margin_ratio
-        else:
-            avail_kbps = max(tbf_rate_kbps - throughput_kbps, 0.0)
-
-        avail_hist.append((now, avail_kbps))
-        backlog_hist.append((now, tbf_backlog_pkts))
-        avg_backlog = _avg_in_window(backlog_hist, args.bw_window)
-        if avg_backlog >= args.backlog_ecn_threshold:
-            ecn_force_until = max(ecn_force_until, now + args.ecn_hold_sec)
-
-        # FPS + profile selection logic based on qnet rule
-        nearest_fps = _nearest_fps([30, 60, 90, 120], avg_fps_switch or fps_server or target_fps)
-
-        fps_profiles = _profiles_for_fps(target_fps)
-        if current_profile is None or current_profile not in fps_profiles:
-            current_profile = fps_profiles[-1] if fps_profiles else None
-            last_profile_change = now
-
-        r_target = current_profile.get("bitrate_kbps", 0) if current_profile else 0
-        qnet = (flow_rate_kbps / r_target) if r_target else 1.0
-        qnet_hist.append((now, qnet))
-
-        if qnet < args.qnet_stress:
-            # Severe stress: reduce resolution
-            if current_profile:
-                fps_profiles = _profiles_for_fps(target_fps)
-                lower = _next_lower_profile(fps_profiles, current_profile)
-                if lower and lower != current_profile and (now - last_profile_change) >= args.profile_hold_sec:
-                    current_profile = lower
-                    last_profile_change = now
-        elif qnet < args.qnet_ok:
-            # Compression stress: reduce FPS one step
-            if nearest_fps < target_fps:
-                target_fps = nearest_fps
-                last_fps_change = now
-                fps_profiles = _profiles_for_fps(target_fps)
-                current_profile = fps_profiles[-1] if fps_profiles else current_profile
-                last_profile_change = now
-        elif qnet > args.qnet_up:
-            # Excess bandwidth: upgrade resolution if sustained
-            if current_profile:
-                fps_profiles = _profiles_for_fps(target_fps)
-                higher = _next_higher_profile(fps_profiles, current_profile)
-                sustain_ok = _min_in_window(qnet_hist, args.upgrade_sustain_sec) > args.qnet_up
-                if higher and higher != current_profile and sustain_ok and (now - last_profile_change) >= args.profile_hold_sec:
-                    current_profile = higher
-                    last_profile_change = now
-
-        # Never exceed the initial/base target FPS
-        if base_target_fps is not None and target_fps > base_target_fps:
-            target_fps = base_target_fps
-            fps_profiles = _profiles_for_fps(target_fps)
-            if current_profile not in fps_profiles:
-                current_profile = fps_profiles[-1] if fps_profiles else current_profile
-
-        target_profile = current_profile
-
-        # Marking logic with state hold
-        if args.marking:
-            if now < state_until:
-                if state == "drop":
-                    dscp_marked, ecn_marked = 46, 1
-                elif state == "reduce":
-                    dscp_marked, ecn_marked = 48, 1
-                elif state == "up":
-                    dscp_marked, ecn_marked = 34, 1
-                else:
-                    dscp_marked, ecn_marked = 36, 1
-            else:
-                if state in {"reduce", "drop"} and (frame_pkt_count > args.frame_pkt_fit or congested):
-                    dscp_marked, ecn_marked = (48, 1) if state == "reduce" else (46, 1)
-                    state_until = now + args.state_hold_sec
-                else:
-                    dscp_marked, _, state = choose_marking(
-                        fps_switch, fps_server, frame_pkt_count, congested
-                    )
-                    ecn_marked = 1
-                    if state in {"reduce", "drop", "up"}:
-                        state_until = now + args.state_hold_sec
-                    else:
-                        state_until = 0.0
-
-        # Always compute decision DSCP/ECN for logging; apply to packets only with --marking
-        if target_profile:
-            current_dscp = target_profile.get("dscp", current_dscp)
-            current_ecn = 3 if now < ecn_force_until else 1
-        else:
-            current_dscp = dscp_marked
-            current_ecn = 3 if now < ecn_force_until else ecn_marked
-
-        # CSV log
-        with open(csv_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                frame_id, round(time.time(), 3), round(fps_switch, 2), round(fps_server, 2), seq, ts,
-                frame_pkt_count, frame_bytes,
-                round(flow_rate_kbps, 2), current_dscp, current_ecn,
-                tbf_backlog_pkts, tbf_backlog_bytes,
-                dualpi2_backlog_pkts, dualpi2_backlog_bytes,
-                round(tbf_rate_kbps, 2), tbf_sent_bytes, tbf_dropped,
-                dualpi2_dropped, round(avail_kbps, 2),
-                target_fps, target_profile.get("name") if target_profile else "",
-                min_marker_pkt_size, min_non_marker_pkt_size
-            ])
-
-        print(f"🎬 Frame {frame_id} | Rflow={flow_rate_kbps:.1f} Kbps | DSCP={current_dscp} | ECN={current_ecn} | FPS={fps_switch:.2f}")
-        frame_id += 1
-        frame_bytes = 0
-        frame_pkt_count = 0
-        min_marker_pkt_size = None
-        min_non_marker_pkt_size = None
-
-        if time.time() - last_health_time >= HEALTH_INTERVAL_SEC:
-            print(
-                f"🩺 Switch health | state={state} | tbf={tbf_backlog_pkts}p "
-                f"dualpi2={dualpi2_backlog_pkts}p | avail={avail_kbps:.1f} kbps | "
-                f"dscp={current_dscp} ecn={current_ecn}"
+def poll_queue():
+    while running:
+        try:
+            output = subprocess.check_output(
+                ["tc", "-s", "qdisc", "show", "dev", args.iface], text=True, stderr=subprocess.DEVNULL
             )
-            last_health_time = time.time()
+            cq, lq = parse_queue_backlog(output)
+        except Exception:
+            cq, lq = 0, 0
+        ts = time.time()
+        with lock:
+            queue_samples.append((ts, cq, lq))
+            while queue_samples and ts - queue_samples[0][0] > WINDOW_SEC:
+                queue_samples.popleft()
+        time.sleep(QUEUE_POLL_SEC)
 
-    if args.marking:
-        set_socket_tos(forward_sock, current_dscp, current_ecn)
 
-    forward_sock.sendto(data, (args.forward_ip, args.forward_port))
+def queue_averages(cutoff):
+    with lock:
+        valid = [x for x in queue_samples if x[0] >= cutoff]
+    if not valid:
+        return 0.0, 0.0
+    return (sum(x[1] for x in valid) / len(valid), sum(x[2] for x in valid) / len(valid))
+
+
+def prompt_model(ps, fs, ifgs, ifgr, cq, lq, e_avg):
+    prompt = (
+        "You are a network controller. "
+        "Return only JSON with keys E, C, N. "
+        "E is ECN decision (0 or 1). "
+        "C is current profile (0-3). "
+        "N is next profile (0-3).\n"
+        f"Features: PS={ps:.2f}, FS={fs:.2f}, IFGS={ifgs:.4f}, IFGR={ifgr:.4f}, CQ={cq:.2f}, LQ={lq:.2f}, E={e_avg:.2f}\n"
+        "Example: {\"E\": 1, \"C\": 1, \"N\": 2}"
+    )
+    response = model.create(prompt=prompt, max_tokens=64, temperature=0.0)
+    text = response.choices[0].text.strip() if hasattr(response, 'choices') else str(response)
+    return parse_model_response(text)
+
+
+def parse_model_response(text: str):
+    text = text.replace("\n", " ")
+    e_match = re.search(r'"?E"?\s*[:=]\s*([01])', text)
+    c_match = re.search(r'"?C"?\s*[:=]\s*([0-3])', text)
+    n_match = re.search(r'"?N"?\s*[:=]\s*([0-3])', text)
+    if not (e_match and c_match and n_match):
+        return None
+    return int(e_match.group(1)), int(c_match.group(1)), int(n_match.group(1))
+
+
+def format_avg(value):
+    return f"**{value:.3f}**"
+
+
+def log_flow_report(flow_id, snapshot, cq, lq, action, model_output):
+    with open(log_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            time.time(), flow_id,
+            snapshot["ps_avg"], snapshot["fs_avg"], snapshot["ifgs_avg"], snapshot["ifgr_avg"],
+            cq, lq, snapshot["ecn_avg"],
+            action[0] if action else "", action[1] if action else "",
+            model_output or ""
+        ])
+    print(
+        f"FLOW {flow_id} | PS={format_avg(snapshot['ps_avg'])} "
+        f"FS={format_avg(snapshot['fs_avg'])} IFGS={format_avg(snapshot['ifgs_avg'])} "
+        f"IFGR={format_avg(snapshot['ifgr_avg'])} CQ={format_avg(cq)} "
+        f"LQ={format_avg(lq)} E={format_avg(snapshot['ecn_avg'])} "
+        f"MODEL={model_output} ACTION={action}"
+    )
+
+
+def rollup(now):
+    cutoff = now - WINDOW_SEC
+    avg_cq, avg_lq = queue_averages(cutoff)
+    snapshots = []
+    with lock:
+        for state in flow_states.values():
+            snapshot = state.snapshot(cutoff)
+            snapshots.append((state, snapshot))
+    for state, snapshot in snapshots:
+        if snapshot["packets"] == 0:
+            continue
+        model_decision = prompt_model(
+            snapshot["ps_avg"], snapshot["fs_avg"], snapshot["ifgs_avg"], snapshot["ifgr_avg"],
+            avg_cq, avg_lq, snapshot["ecn_avg"]
+        )
+        if model_decision is None:
+            action = None
+        else:
+            _, current_profile, next_profile = model_decision
+            action = None
+            if current_profile != next_profile:
+                action = (PROFILE_DSCP[next_profile], 1)
+            state.update_decision((next_profile, model_decision[0]))
+        log_flow_report(state.flow_id, snapshot, avg_cq, avg_lq, state.active_action, model_decision)
+
+
+def packet_handler(pkt):
+    global last_rollup
+    raw = pkt.get_payload()
+    scapy_pkt = IP(raw)
+    if scapy_pkt.version != 4:
+        pkt.accept()
+        return
+    proto = scapy_pkt.proto
+    sport = dport = 0
+    payload = b""
+    rtp_marker = None
+    rtp_ts = None
+    if proto == 17 and UDP in scapy_pkt:
+        sport = scapy_pkt[UDP].sport
+        dport = scapy_pkt[UDP].dport
+        payload = bytes(scapy_pkt[UDP].payload)
+    elif proto == 6 and TCP in scapy_pkt:
+        sport = scapy_pkt[TCP].sport
+        dport = scapy_pkt[TCP].dport
+        payload = bytes(scapy_pkt[TCP].payload)
+    flow_key = (scapy_pkt.src, scapy_pkt.dst, sport, dport, proto)
+    with lock:
+        state = flow_states.get(flow_key)
+        if state is None:
+            state = FlowState(flow_key)
+            flow_states[flow_key] = state
+    ecn_flag = bool(scapy_pkt.tos & 0x03)
+    rtp_data = parse_rtp(payload)
+    if rtp_data is not None:
+        rtp_marker, _, rtp_ts = rtp_data
+    state.add_packet(time.time(), len(raw), ecn_flag, rtp_marker, rtp_ts)
+    if state.active_action and args.marking:
+        dscp_val, ecn_val = state.active_action
+        scapy_pkt.tos = ((dscp_val & 0x3F) << 2) | (ecn_val & 0x03)
+        del scapy_pkt.chksum
+        raw = bytes(scapy_pkt)
+        pkt.set_payload(raw)
+    pkt.accept()
+    now = time.time()
+    if now - last_rollup >= WINDOW_SEC:
+        last_rollup = now
+        threading.Thread(target=rollup, args=(now,), daemon=True).start()
+
+
+def cleanup(signum, frame):
+    global running
+    print("Stopping nicole_agent...")
+    running = False
+    if nfqueue:
+        nfqueue.unbind()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, cleanup)
+signal.signal(signal.SIGTERM, cleanup)
+
+with open(log_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([
+        "timestamp", "flow_id", "ps_avg", "fs_avg", "ifgs_avg", "ifgr_avg",
+        "cq_avg", "lq_avg", "ecn_avg", "action_dscp", "action_ecn", "model_output"
+    ])
+
+poll_thread = threading.Thread(target=poll_queue, daemon=True)
+poll_thread.start()
+
+nfqueue = NetfilterQueue()
+nfqueue.bind(args.queue_num, packet_handler)
+print(f"NICoLE agent listening on NFQUEUE {args.queue_num} and interface {args.iface}")
+try:
+    nfqueue.run()
+except KeyboardInterrupt:
+    cleanup(None, None)

@@ -24,7 +24,7 @@ class Receiver:
     async def run(self):
         self.loop = asyncio.get_running_loop()
         # just change it to server IP and Port, so that's enough!
-        self.ws = await websockets.connect("ws://127.0.0.1:8765")
+        self.ws = await websockets.connect("ws://192.168.100.11:8765") #("ws://127.0.0.1:8765")
 
         self.webrtc.connect("pad-added", self.on_pad)
         self.webrtc.connect("on-ice-candidate", self.on_ice)
