@@ -272,6 +272,6 @@ Your L4S topology is fully configured.
 ---
 
 *L4S Router Topology for NiCoLE Project*  
-*Setup Date: May 19, 2026*  
-*Status: Ready for Testing ✅*
+***Setup & Issue Date:** May 19, 2026*  
+***Status: **Ready for Testing ✅*
 
