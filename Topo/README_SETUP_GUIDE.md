@@ -38,7 +38,7 @@ tc -s qdisc show dev enp8s0  # Should show "dualpi2"
 ### Step 2️⃣ On Host Machine (where Mininet runs)
 
 ```bash
-cd /home/alireza/Myprojects/NiCoLE/Topo
+cd ./NiCoLE/Topo
 sudo ./setup_topology.sh
 ```
 
@@ -93,7 +93,7 @@ NiCoLE/Topo/
 ### Method A: Automatic (Recommended for First Time)
 
 ```bash
-cd /home/alireza/Myprojects/NiCoLE/Topo
+cd ./NiCoLE/Topo
 ./quick_start.sh
 ```
 
@@ -422,7 +422,7 @@ mininet> exit
 
 ## 📝 Files Created/Modified
 
-All files are in: `/home/alireza/Myprojects/NiCoLE/Topo/`
+All files are in: `./NiCoLE/Topo/`
 
 - ✅ `topo1.py` - Updated with L4S router support
 - ✅ `setup_topology.sh` - New helper script
