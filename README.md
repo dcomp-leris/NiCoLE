@@ -193,14 +193,14 @@ It samples every `0.4s`, extracts `PS`, `FS`, `IFGS`, `IFGR`, `CQ`, `LQ`, `E`, r
 On the host machine:
 
 ```bash
-cd /home/alireza/Myprojects/NiCoLE/Topo
+cd ./NiCoLE/Topo
 sudo ./setup_topology.sh
 ```
 
 2) Start the topology
 
 ```bash
-sudo python3 /home/alireza/Myprojects/NiCoLE/Topo/topo1.py
+sudo python3 ./NiCoLE/Topo/topo1.py
 ```
 
 3) Confirm host roles
