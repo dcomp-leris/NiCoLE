@@ -160,15 +160,15 @@ sudo iptables -I FORWARD -i enp8s0 -o enp7s0 -j NFQUEUE --queue-num 1
 5) Run the NICoLE agent
 
 ```bash
-sudo python3 /home/alireza/Myprojects/NiCoLE/vm_conf/nicole_agent.py \
+sudo python3 ~/NiCoLE/vm_conf/nicole_agent.py \
     --iface enp8s0 \
-    --model /home/alireza/Myprojects/NiCoLE/models/nicole-q4.gguf \
+    --model ~/NiCoLE/models/nicole-q4.gguf \
     --marking
 ```
 
 The agent logs results to:
 
-`/home/alireza/Myprojects/NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv`
+`~/NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv`
 
 It samples every `0.4s`, extracts `PS`, `FS`, `IFGS`, `IFGR`, `CQ`, `LQ`, `E`, runs the GGUF model, and applies DSCP/ECN marking.
 
