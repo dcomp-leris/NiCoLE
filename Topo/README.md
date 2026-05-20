@@ -252,7 +252,7 @@ PING 192.168.100.11 from 192.168.100.10
 # 3. Setup topology
 # 4. Optionally start Mininet
 Finally, if it was not solved yet,
-you contact Alireza (ashirmarz@ufscar.br)!
+you contact the **Alireza (ashirmarz@ufscar.br)**!
 ```
 
 **Alternatively**, read the first 3 pages of [README_SETUP_GUIDE.md](README_SETUP_GUIDE.md) then run:
