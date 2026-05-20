@@ -12,7 +12,7 @@
 
 **Note**: NICoLE (Network Inference for Congestion-aware Low-latency Optimization) is a compact LLM-based controller for congestion-aware RTP/WebRTC adaptive video streaming.
 
-# Requirements & Componenets
+# Prerequirements Installation
 **Host Computer**
 ```text
 sudo apt update &&
@@ -27,22 +27,22 @@ sudo apt update &&
 sudo apt install -y python3-pip python3-netfilterqueue iptables iproute2 &&
 sudo pip3 install scapy llama-cpp-python
 ```
-
-## 1 - WebRTC + GCC 
+# NICoLE Active Componets
+**1 - WebRTC + GCC** 
 - Go to Gst_WebRTC
 - Run sender/receiver and signalling
 
         cd ./Gst_WebRTC
   
-## 2 - L4S/DualQ Enabled device
+**2 - L4S/DualQ Enabled Network Device**
 
         cd ./vm_conf
 
-## 3 - Mininet Simple Topology
+**3 - Mininet Simple Topology**
         
         cd ./Topo
 
-## 4 - NICoLE Agent Model
+**4 - NICoLE Agent Model**
 
 - Go to the huggingface and find the following fine-tuned model!
 
@@ -59,27 +59,6 @@ Download and add models (HF & GGUF) to this project:
 
         cd ./models
         git clone https://huggingface.co/alirezashirmarz/NICoLE-LLM
-
-**The project demonstrates**:
-
-* real-time WebRTC streaming
-* congestion-aware profile adaptation
-* compact LLM inference
-* GGUF quantized deployment
-* edge AI feasibility for networking
-
----
-
-# Features
-
-* RTP/WebRTC adaptive streaming
-* Compact symbolic prompting
-* Hugging Face inference
-* GGUF / llama.cpp deployment
-* CPU deployment benchmarking
-* Congestion-aware profile switching
-* QoE-aware adaptation
-* Reproducible topology and dataset generation
 
 ---
 
