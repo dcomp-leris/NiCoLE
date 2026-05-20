@@ -9,14 +9,16 @@
 
 *This paper was accepted and will be presented in the IFIP Networking 2026 Conference on 2026/05/24.*
 
-
 **Note**: NICoLE (Network Inference for Congestion-aware Low-latency Optimization) is a compact LLM-based controller for congestion-aware RTP/WebRTC adaptive video streaming.
 
-<img width="905" height="448" alt="image" src="https://github.com/user-attachments/assets/ca4fed0d-30e6-4007-b111-758d7931fa8a" />
+# Requirements & Componenets
 
-
-
-# Requirements
+```text
+sudo apt update
+sudo apt install -y python3-gi python3-websockets gstreamer1.0-tools \
+  gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad gstreamer1.0-libav
+```
 
 ## 1 - WebRTC + GCC 
 - Go to Gst_WebRTC
