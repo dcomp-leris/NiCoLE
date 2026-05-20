@@ -22,7 +22,11 @@ NICoLE (Network Inference for Congestion-aware Low-latency Optimization) is a co
   
 ## 2 - L4S/DualQ Support device
 
+        cd ./vm_conf
+
 ## 3 - Mininet Simple Topology
+        
+        cd ./Topo
 
 ## 4 - NICoLE Agent Model
 
@@ -271,3 +275,173 @@ QoE metrics:
 }
 ```
 
+
+
+# NiCoLE Router VM and Host Experiment README
+
+
+## Router VM setup
+
+1) Install required packages
+
+On the router VM:
+
+```bash
+sudo apt update
+sudo apt install -y python3-pip python3-netfilterqueue iptables iproute2
+sudo pip3 install scapy llama-cpp-python
+```
+
+2) Enable IP forwarding
+
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+
+3) Enforce total 40 Mbps on `enp8s0`
+
+This makes the router’s `enp8s0` path the 40 Mbps bottleneck:
+
+```bash
+sudo tc qdisc replace dev enp8s0 root handle 1: htb default 11
+sudo tc class replace dev enp8s0 parent 1: classid 1:1 htb rate 40mbit ceil 40mbit
+sudo tc qdisc replace dev enp8s0 parent 1:1 handle 10: dualpi2
+```
+
+4) Capture router traffic in NFQUEUE
+
+```bash
+sudo iptables -I FORWARD -i enp7s0 -o enp8s0 -j NFQUEUE --queue-num 1
+sudo iptables -I FORWARD -i enp8s0 -o enp7s0 -j NFQUEUE --queue-num 1
+```
+
+5) Run the NICoLE agent
+
+```bash
+sudo python3 /home/alireza/Myprojects/NiCoLE/vm_conf/nicole_agent.py \
+    --iface enp8s0 \
+    --model /home/alireza/Myprojects/NiCoLE/models/nicole-q4.gguf \
+    --marking
+```
+
+The agent logs results to:
+
+`/home/alireza/Myprojects/NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv`
+
+It samples every `0.4s`, extracts `PS`, `FS`, `IFGS`, `IFGR`, `CQ`, `LQ`, `E`, runs the GGUF model, and applies DSCP/ECN marking.
+
+---
+
+## Host setup and scenario run
+
+1) Prepare the Mininet topology
+
+On the host machine:
+
+```bash
+cd /home/alireza/Myprojects/NiCoLE/Topo
+sudo ./setup_topology.sh
+```
+
+2) Start the topology
+
+```bash
+sudo python3 /home/alireza/Myprojects/NiCoLE/Topo/topo1.py
+```
+
+3) Confirm host roles
+
+In Mininet CLI:
+
+```text
+h0 → 192.168.100.10 (iperf3 generator)
+h1 → 192.168.100.11 (WebRTC video source)
+h2 → 192.168.200.10 (client / receiver)
+```
+
+---
+
+## Traffic scenario for experiment
+
+### A) Start iperf3 traffic from `h0` to `h2`
+
+In Mininet CLI:
+
+```bash
+h2 iperf3 -s &
+h0 iperf3 -c 192.168.200.10 -u -b 35M -t 60 &
+```
+
+This makes `h0` the sender and `h2` the receiving client.
+
+### B) Start WebRTC video from `h1` to `h2`
+
+Use your existing `Gst_WebRTC` modules:
+
+- Run the signaling server first
+- Run `sender.py` on the source side
+- Run `receiver.py` on the client side
+
+Note: the current `Gst_WebRTC` scripts use `ws://127.0.0.1:8765`. For Mininet hosts, either run the signaling server in the same namespace or change it to bind an IP reachable by `h1` and `h2`.
+
+Example:
+
+```bash
+# On a machine reachable by h1/h2
+cd /home/alireza/Myprojects/NiCoLE/Gst_WebRTC
+python3 server.py
+```
+
+Then on `h1`:
+
+```bash
+h1 python3 /home/alireza/Myprojects/NiCoLE/Gst_WebRTC/sender.py &
+```
+
+And on `h2`:
+
+```bash
+h2 python3 /home/alireza/Myprojects/NiCoLE/Gst_WebRTC/receiver.py &
+```
+
+---
+
+## Collecting the experiment
+
+### Check the agent log
+
+On the router VM:
+
+```bash
+tail -f /home/alireza/Myprojects/NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv
+```
+
+### Verify bottleneck shaping
+
+On the router VM:
+
+```bash
+sudo tc -s qdisc show dev enp8s0
+```
+
+### Stop the agent cleanly
+
+Press `Ctrl-C` in the NICoLE agent terminal.
+
+### Clear NFQUEUE rules when done
+
+```bash
+sudo iptables -D FORWARD -i enp7s0 -o enp8s0 -j NFQUEUE --queue-num 1
+sudo iptables -D FORWARD -i enp8s0 -o enp7s0 -j NFQUEUE --queue-num 1
+```
+
+---
+
+## Summary
+
+- `h0` = iperf3 traffic generator
+- `h1` = WebRTC video source
+- `h2` = watched client
+- Router bottleneck `enp8s0` = 40 Mbps
+- Agent file = `/home/alireza/Myprojects/NiCoLE/vm_conf/nicole_agent.py`
+- Log output = `/home/alireza/Myprojects/NiCoLE/vm_conf/logs/nicole_agent_flow_log.csv`
