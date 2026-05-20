@@ -7,7 +7,7 @@ Run:
 ```text
         alirezashirmarz/NICoLE-LLM
 ```
-        or
+or        
 ```text
         alirezashirmarz/NICoLE-LLM-GGUF
 ```
@@ -15,4 +15,4 @@ You can also clone the repository:
 ```text
         git clone https://huggingface.co/alirezashirmarz/NICoLE-LLM
 ``` 
-👉 Model GGUF file must be downloaded in this folder. 
+👉 Model GGUF file **(nicole-q4.gguf)** must be downloaded and placed in this folder. 
