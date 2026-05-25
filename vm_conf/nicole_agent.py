@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Author: Alireza Shirmarz
+# Location: Leris, UFSCar
+# Date: 2026-05-20
 """
 NICoLE VM agent for router-based RTP/WebRTC flow telemetry and DSCP/ECN control.
 
