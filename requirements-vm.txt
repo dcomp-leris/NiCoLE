@@ -1,0 +1,3 @@
+scapy
+llama-cpp-python
+NetfilterQueue
