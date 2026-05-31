@@ -1,10 +1,15 @@
 # NICoLE: Are In-Network LLM-Based Agents Cost-Feasible for RTP Video Streaming?
 
+<p align="left">
+  <img src="https://github.com/user-attachments/assets/7bdb0620-e6c4-4942-b852-b6b41f2710e1" width="300" alt="image" />
+</p>
+
 [![NICoLE](https://img.shields.io/badge/NICoLE-Presentation-blue)](https://docs.google.com/presentation/d/1LHkMz7mNkxGzYqVPaLeMySLA2KP4OjW1hrWsEONwt4c/edit?usp=sharing)
 [![NICoLE](https://img.shields.io/badge/NICoLE-Paper-yellow)](https://github.com/dcomp-leris/NiCoLE/blob/main/2026151137.pdf)
 [![NICoLE](https://img.shields.io/badge/Model-Huggingface-green)](https://huggingface.co/alirezashirmarz/NICoLE-LLM)
 [![NICoLE](https://img.shields.io/badge/Conference-IFIPNetworking2026-red)](https://networking.ifip.org/2026/index.php/program/detailed-program)
 [![NICoLE](https://img.shields.io/badge/L4SFeatures-RFC9331&RFC9332-lightblue)](https://github.com/L4STeam/linux.git)
+
 
 
 
